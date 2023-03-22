@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn
 import pathlib
 
-data = pd.read_excel(pathlib.Path(r"Data\SS_Drug_Screen_2_22_2023.xlsx"), skiprows=48,
+data = pd.read_excel(pathlib.Path(r"SS_Drug_Screen_2_22_2023.xlsx"), skiprows=48,
                      usecols="B:E", nrows=72)
 positiveControl = data[(data["Well"].str[0] == "H") & (data["Well"].str[1] != "1")][
     "Plate 1"].mean()

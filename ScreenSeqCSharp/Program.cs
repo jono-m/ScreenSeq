@@ -20,9 +20,9 @@ public class ScreenSeq {
     }
 
     public static void Main() {
-        var inputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/BarcodesFASTQ/";
+        var inputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/BarcodesFASTQ_REDO/";
         var cellDataPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/filtered_feature_bc_matrix.h5";
-        var outputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/ssCounts_HD2.csv";
+        var outputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/ssCounts_REDO.csv";
 
         var cellBarcodes = LoadCellBarcodes(cellDataPath);
         var ssBarcodes = SSBarcodes();
@@ -37,8 +37,9 @@ public class ScreenSeq {
 
         int readNumber = 0;
         int lowQuality = 0;
+        int badFeatureBarcodes = 0;
+        int badCellBarcodes = 0;
         int badBarcodes = 0;
-        int distCutoff = 2;
         for (int laneIndex = 0; laneIndex < r1Files.Length; laneIndex++) {
             using var compressedStream1 = File.Open(r1Files[laneIndex], FileMode.Open);
             using var compressedStream2 = File.Open(r2Files[laneIndex], FileMode.Open);
@@ -54,39 +55,65 @@ public class ScreenSeq {
                 ref read1Identifier, ref read1Quality, ref read1, 
                 ref read2Identifier, ref read2Quality, ref read2)) {
                 readNumber++;
-                if (readNumber % 100000 == 0) {
-                    Console.WriteLine($"Completed read {{{readNumber}}}. {{{lowQuality}}} low-quality reads detected so far. {{{readNumber - badBarcodes}}} good barcodes detected.");
+                if (readNumber % 10000 == 0) {
+                    Console.WriteLine($"Completed read {{{readNumber}}}.");
+                    Console.WriteLine($"\tOf all reads, {{{100 * (readNumber - lowQuality) / readNumber}}}% are high-quality. ");
+                    Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badFeatureBarcodes) / (readNumber - lowQuality)}}}% have good Screen-Seq barcodes.");
+                    Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badCellBarcodes) / (readNumber - lowQuality)}}}% have good cell barcodes.");
+                    Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badBarcodes) / (readNumber - lowQuality)}}}% have both good cell and Screen-Seq barcodes.");
                 }
 
                 if (!IdentifiersMatch(read1Identifier, read2Identifier)) {
                     Console.WriteLine($"WARNING: identifiers do not match for read {{{readNumber}}}.");
                 }
-                if(MinQuality(read1Quality+read2Quality) < 14) {
+
+                // Check for low-quality reads in the important regions.
+                var ssBarcode = read2.Substring(10, 15);
+                var ssBarcodeQual = read2Quality.Substring(10, 15);
+                var cellBarcode = read1.Substring(0, 16);
+                var cellBarcodeQual = read1Quality.Substring(0, 16);
+                var umi = read1.Substring(16, 12);
+                var umiQual = read1Quality.Substring(16, 12);
+                var qual = ssBarcodeQual + cellBarcodeQual+umi;
+                if (BasesWithQualityBelow(qual, 30) > 3) {
                     lowQuality++;
                     continue;
                 }
 
-                var ssBarcode = read2.Substring(10, 15);
-                if(!ssBcCorrectionMap.ContainsKey(ssBarcode)) {
+                // Correct barcode reads with possible single-base substitution errors.
+                if (!ssBcCorrectionMap.ContainsKey(ssBarcode)) {
                     var bc = GetMostSimilarBarcode(ssBarcode, ssBarcodes, out int dist);
-                    ssBcCorrectionMap[ssBarcode] = dist <= distCutoff ? bc : "";
+                    ssBcCorrectionMap[ssBarcode] = dist <= 1 ? bc : "";
                 }
                 ssBarcode = ssBcCorrectionMap[ssBarcode];
 
-                var cellBarcode = read1.Substring(0, 16);
                 if (!cellBcCorrectionMap.ContainsKey(cellBarcode)) {
                     var bc = GetMostSimilarBarcode(cellBarcode, cellBarcodes, out int dist);
-                    cellBcCorrectionMap[cellBarcode] = dist <= distCutoff ? bc : "";
+                    cellBcCorrectionMap[cellBarcode] = dist <= 3 ? bc : "";
                 }
                 cellBarcode = cellBcCorrectionMap[cellBarcode];
 
-
-                if (ssBarcode == "" || cellBarcode == "") {
+                bool bad = false;
+                if (ssBarcode == "") {
+                    bad = true;
+                    badFeatureBarcodes++;
+                }
+                if (cellBarcode == "") {
+                    bad = true;
+                    badCellBarcodes++;
+                }
+                if(bad) {
                     badBarcodes++;
                     continue;
                 }
 
-                var umi = read1.Substring(16, 12);
+                if(!cellBCCounts[cellBarcode][ssBarcode].Contains(umi)) {
+                    // Check if HD 1 is presesnt
+                    if(IsHammingDistance1Present(umi, cellBCCounts[cellBarcode][ssBarcode], 1)) {
+                        // It is, so assume that there was a substitution made and we've already counted this one.
+                        continue;
+                    }
+                }
                 cellBCCounts[cellBarcode][ssBarcode].Add(umi);
             }
         }
@@ -114,6 +141,14 @@ public class ScreenSeq {
         return wrong;
     }
 
+    public static bool IsHammingDistance1Present(string inBarcode, HashSet<string> set, int distance) {
+        foreach(var b in set) {
+            if(HammingDistance(inBarcode, b) == distance) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public static string GetMostSimilarBarcode(string inBarcode, string[] barcodes, out int minDistance) {
         minDistance = 1000;
@@ -144,8 +179,8 @@ public class ScreenSeq {
         return dataset.Select(x => FlipCellBC(x.Substring(0, 16))).ToArray();
     }
 
-    public static int MinQuality(string s) {
-        return s.Min(x => (int)x) - 33;
+    public static int BasesWithQualityBelow(string s, int cutoff) {
+        return s.Count(x => (x-33) < cutoff);
     }
 
     public static bool IdentifiersMatch(string i1, string i2) {
