@@ -20,26 +20,25 @@ public class ScreenSeq {
     }
 
     public static void Main() {
-        var inputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/BarcodesFASTQ_REDO/";
-        var cellDataPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/filtered_feature_bc_matrix.h5";
-        var outputPath = "C:/Users/jonoj/Repositories/ScreenSeq/Data/3_8_2023_Validation/ssCounts_REDO.csv";
+        var inputPath = "C:/Users/jonoj/Repositories/ScreenSeq/3_24_2023_Screen/";
+        var outputPath = "C:/Users/jonoj/Repositories/ScreenSeq/3_24_2023_Screen/ssCounts.csv";
 
-        var cellBarcodes = LoadCellBarcodes(cellDataPath);
         var ssBarcodes = SSBarcodes();
-        var cellBCCounts = cellBarcodes.ToDictionary(cellBarcode => cellBarcode,
-            cellBarcode => ssBarcodes.ToDictionary(ssBarcode => ssBarcode,
-                                                    ssBarcode => new HashSet<string>()));
-        Dictionary<string, string> cellBcCorrectionMap = new Dictionary<string, string>();
         Dictionary<string, string> ssBcCorrectionMap = new Dictionary<string, string>();
+        Dictionary<string, string> cellBcCorrectionMap = new Dictionary<string, string>();
+        HashSet<string> cellBarcodes = new HashSet<string>();
 
         var r1Files = Directory.EnumerateFiles(inputPath, "*R1*").ToArray();
         var r2Files = Directory.EnumerateFiles(inputPath, "*R2*").ToArray();
 
+        var cellBCCounts = new Dictionary<string, Dictionary<string, HashSet<string>>>();
+
         int readNumber = 0;
         int lowQuality = 0;
         int badFeatureBarcodes = 0;
-        int badCellBarcodes = 0;
         int badBarcodes = 0;
+        int numcells = 0;
+        int maxUMIs = 0;
         for (int laneIndex = 0; laneIndex < r1Files.Length; laneIndex++) {
             using var compressedStream1 = File.Open(r1Files[laneIndex], FileMode.Open);
             using var compressedStream2 = File.Open(r2Files[laneIndex], FileMode.Open);
@@ -56,11 +55,10 @@ public class ScreenSeq {
                 ref read2Identifier, ref read2Quality, ref read2)) {
                 readNumber++;
                 if (readNumber % 10000 == 0) {
-                    Console.WriteLine($"Completed read {{{readNumber}}}.");
+                    Console.WriteLine($"Completed read {{{readNumber}}}. {{{numcells}}} cells identified.");
                     Console.WriteLine($"\tOf all reads, {{{100 * (readNumber - lowQuality) / readNumber}}}% are high-quality. ");
                     Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badFeatureBarcodes) / (readNumber - lowQuality)}}}% have good Screen-Seq barcodes.");
-                    Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badCellBarcodes) / (readNumber - lowQuality)}}}% have good cell barcodes.");
-                    Console.WriteLine($"\t\tOf these, {{{100 * (readNumber - lowQuality - badBarcodes) / (readNumber - lowQuality)}}}% have both good cell and Screen-Seq barcodes.");
+                    Console.WriteLine($"Max UMIs per cell: {{{maxUMIs}}}");
                 }
 
                 if (!IdentifiersMatch(read1Identifier, read2Identifier)) {
@@ -75,7 +73,7 @@ public class ScreenSeq {
                 var umi = read1.Substring(16, 12);
                 var umiQual = read1Quality.Substring(16, 12);
                 var qual = ssBarcodeQual + cellBarcodeQual+umi;
-                if (BasesWithQualityBelow(qual, 30) > 3) {
+                if (BasesWithQualityBelow(qual, 20) > 1) {
                     lowQuality++;
                     continue;
                 }
@@ -87,9 +85,13 @@ public class ScreenSeq {
                 }
                 ssBarcode = ssBcCorrectionMap[ssBarcode];
 
-                if (!cellBcCorrectionMap.ContainsKey(cellBarcode)) {
-                    var bc = GetMostSimilarBarcode(cellBarcode, cellBarcodes, out int dist);
-                    cellBcCorrectionMap[cellBarcode] = dist <= 3 ? bc : "";
+                if(!cellBcCorrectionMap.ContainsKey(cellBarcode)) {
+                    var mostSimilar = GetMostSimilarBarcode(cellBarcode, cellBarcodes, out int dist);
+                    if (dist > 3) {
+                        cellBarcodes.Add(cellBarcode);
+                        mostSimilar = cellBarcode;
+                    }
+                    cellBcCorrectionMap[cellBarcode] = mostSimilar;
                 }
                 cellBarcode = cellBcCorrectionMap[cellBarcode];
 
@@ -98,15 +100,16 @@ public class ScreenSeq {
                     bad = true;
                     badFeatureBarcodes++;
                 }
-                if (cellBarcode == "") {
-                    bad = true;
-                    badCellBarcodes++;
-                }
                 if(bad) {
                     badBarcodes++;
                     continue;
                 }
 
+                if (!cellBCCounts.ContainsKey(cellBarcode)) {
+                    cellBCCounts[cellBarcode] = ssBarcodes.ToDictionary(ssBarcode => ssBarcode,
+                                                    ssBarcode => new HashSet<string>());
+                    numcells++;
+                }
                 if(!cellBCCounts[cellBarcode][ssBarcode].Contains(umi)) {
                     // Check if HD 1 is presesnt
                     if(IsHammingDistance1Present(umi, cellBCCounts[cellBarcode][ssBarcode], 1)) {
@@ -115,6 +118,7 @@ public class ScreenSeq {
                     }
                 }
                 cellBCCounts[cellBarcode][ssBarcode].Add(umi);
+                maxUMIs = Math.Max(maxUMIs, cellBCCounts[cellBarcode][ssBarcode].Count);
             }
         }
 
@@ -122,7 +126,7 @@ public class ScreenSeq {
             "CellBC,SS4,SS5,SS6,SS7,SS8,SS9,SS10,SS11,SSN"
         };
         Console.WriteLine("Summing...");
-        foreach (var cellBarcode in cellBarcodes) {
+        foreach (var cellBarcode in cellBCCounts.Keys) {
             var counts = ssBarcodes.Select(ssBarcode => cellBCCounts[cellBarcode][ssBarcode].Count);
             string newLine = cellBarcode + "," + string.Join(",", counts);
             data.Add(newLine);
@@ -150,17 +154,17 @@ public class ScreenSeq {
         return false;
     }
 
-    public static string GetMostSimilarBarcode(string inBarcode, string[] barcodes, out int minDistance) {
+    public static string GetMostSimilarBarcode(string inBarcode, IEnumerable<string> barcodes, out int minDistance) {
         minDistance = 1000;
-        int mostSimilar = -1;
-        for(int i = 0; i < barcodes.Length; i++) {
-            var dist = HammingDistance(barcodes[i], inBarcode);
+        string mostSimilar = "";
+        foreach(var barcode in barcodes) { 
+            var dist = HammingDistance(barcode, inBarcode);
             if(dist < minDistance) {
                 minDistance = dist;
-                mostSimilar = i;
+                mostSimilar = barcode;
             }
         }
-        return barcodes[mostSimilar];
+        return mostSimilar;
     }
 
     public static Dictionary<char, char> invert = new Dictionary<char, char>() { 
