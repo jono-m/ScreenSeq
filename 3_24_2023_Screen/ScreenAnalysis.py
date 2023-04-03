@@ -45,75 +45,65 @@ def LoadSSData():
     ssData = expressionMatrix[:, ssBarcodeIndices]
 
     # Only use barcodes 4-11 and N.
-    indicesToUse = (3, 4, 5, 6, 7, 8, 9, 10, 16)
+    indicesToUse = [3, 4, 5, 6, 7, 8, 9, 10, 16]
     ssBarcodeNames = [ssBarcodeNames[indexToUse] for indexToUse in indicesToUse]
     ssData = ssData[:, indicesToUse]
+
+    # Drop cells that have no barcodes detected
+    goodCells = ssData.sum(axis=1) > 0
+    ssData = ssData[goodCells, :]
+    cellBarcodes = cellBarcodes[goodCells, None]
 
     # Normalize per-cell.
     ssData = ssData / ssData.sum(axis=1, keepdims=True)
 
-    # Normalize per-barcode
-    ssData = ssData - ssData.min(axis=0, keepdims=True)
-    ssData = np.concatenate([cellBarcodes[:, None], ssData], axis=1)
-    ssData = pandas.DataFrame(ssData, columns=["Cell"] + ssBarcodeNames)
-    ssData = ssData.set_index("Cell").astype(int)
+    # Drop the normalization barcode
+    ssData = ssData[:, :-1]
 
-    # Normalize Screen-seq barcodes.
-    ssData["ScreenSeqTotal"] = ssData.sum(axis=1)
-    ssData[[bc + "_norm" for bc in ssBarcodeNames]] = ssData[
-        ssBarcodeNames].divide(ssData["ScreenSeqTotal"], axis=0)
+    # Concatenate to a Pandas frame. Assign the drug names.
+    ssData = pandas.DataFrame(np.concatenate([cellBarcodes, ssData], axis=1),
+                              columns=["Cell", "Tanespimycin", "Cytarabine", "Dasatinib",
+                                       "Homoharringtonine", "Hydroxyurea",
+                                       "Imatinib", "Ruxolitinib", "Vorinostat"])
+    ssData = ssData.set_index("Cell").astype(float)
+    ssData = ssData.loc[(ssData <= 0.4).all(axis=1)]
 
-    # Count the number of mitochondrial UMIs per cell, the number of unique genes per cell, and the
-    # total UMI counts per cell.
-    mitochondrialIndices = np.char.startswith(features["name"], "MT")
-    ssData["Mitochondrial UMIs"] = \
-        expressionMatrix[:, mitochondrialIndices].sum(axis=1, keepdims=True)
-
-    geneIndices = ~(np.char.startswith(features["name"], "ScreenSeq") |
-                    np.char.startswith(features["name"], "MT"))
-    geneExpressionMatrix = expressionMatrix[:, geneIndices]
-    ssData["Gene UMIs"] = geneExpressionMatrix.sum(axis=1, keepdims=True)
-    ssData["Genes"] = (geneExpressionMatrix > 0).sum(axis=1)
-
-    # Ignore cells with low screen seq numbers, genes, UMIs, or high mitochondrial UMIs.
-    # cellExpressionData = cellExpressionData.loc[
-    #     (cellExpressionData["Genes"] > 2000) &
-    #     (cellExpressionData["Gene UMIs"] > 12000) &
-    #     (cellExpressionData["ScreenSeqTotal"] > 0) &
-    #     (cellExpressionData["Mitochondrial UMIs"] < 3000) &
-    #     (cellExpressionData["ScreenSeqN_norm"] < 0.95)
-    # ]
-    ssData = ssData.loc[
-        (ssData["Genes"] > 3000) &
-        (ssData["Gene UMIs"] > 8000) &
-        (ssData["Gene UMIs"] < 50000) &
-        (ssData["ScreenSeqTotal"] > 0) &
-        ((ssData[["%s_norm" % s for s in ssBarcodeNames[3:-6]]] <= 0.4).all(axis=1))]
-
-    def Plot(sortBy):
-        d = ssData.sort_values(sortBy)
-        d = d[["%s_norm" % s for s in ssBarcodeNames[3:-6]] + [sortBy]].copy()
-        d = (d - d.max()) / (d.max() - d.min())
-        seaborn.heatmap(d)
-
-    ssData = ssData[["%s_norm" % s for s in ssBarcodeNames[3:-6]]].copy()
-    ssData = ssData.iloc[np.where((ssData <= 0.4).all(axis=1))[0], :]
-    g = seaborn.clustermap(ssData, standard_scale=1,
-                           xticklabels=["Tanespimycin", "Cytarabine", "Dasatinib",
-                                        "Homoharringtonine", "Hydroxyurea",
-                                        "Imatinib", "Ruxolitinib", "Vorinostat"],
-                           yticklabels=[],
-                           dendrogram_ratio=(0.1, 0.1),
-                           figsize=(8, 7),
-                           cbar_pos=(1, 0.2, 0.1, 0.6),
-                           col_cluster=False, )
-    g.fig.subplots_adjust(right=0.8, bottom=0.1)
-    g.ax_cbar.set_position([0.85, 0.1, 0.02, 0.78])
-    g.ax_cbar.set_ylabel("Normalized barcode abundance", labelpad=10)
-    g.ax_heatmap.tick_params(axis='x', rotation=30)
-    g.ax_heatmap.set_xlabel("Barcode")
-    g.ax_heatmap.set_ylabel("Cell (n=%d)" % len(ssData))
-    plt.show()
+    return ssData
 
 
-LoadSSData()
+# Cluster cells to different treatment groups based on barcode abundances
+def ClusterTreatments(ssData):
+    numDrugs = len(ssData.columns)
+    centroidPermutations = np.asarray([[int(x) for x in format(i, "0%db" % numDrugs)] for i in range(2 ** numDrugs)])
+    centroidLo = np.asarray(ssData.quantile(0.25))
+    centroidHi = np.asarray(ssData.quantile(0.75))
+    centroids = (centroidPermutations * (centroidHi-centroidLo))+centroidLo
+
+    distanceMatrix = scipy.spatial.distance_matrix(np.asarray(ssData), centroids)
+    closestCentroidIndices = np.argmin(distanceMatrix, axis=1)
+    closestCentroids = centroids[closestCentroidIndices]
+    distanceToClosest = distanceMatrix.min(axis=1, keepdims=True)
+    return pandas.DataFrame(index=ssData.index, data=np.concatenate([closestCentroidIndices[:, None], closestCentroids, distanceToClosest], axis=1),
+                            columns=["Treatment ID"] + list(ssData.columns) + ["Distance"])
+
+
+data = LoadSSData()
+clustered = ClusterTreatments(data)
+data["TreatmentID"] = clustered["Treatment ID"]
+# data = data.loc[clustered["Distance"] <= 0.1]
+
+data = data.sort_values("TreatmentID", ascending=False)
+g = seaborn.clustermap(data.iloc[:, :-1], standard_scale=1,
+                       yticklabels=[],
+                       figsize=(8, 7),
+                       cbar_pos=(1, 0.2, 0.1, 0.6),
+                       col_cluster=False,
+                       row_cluster=False,
+                       cmap="viridis")
+g.fig.subplots_adjust(right=0.8, bottom=0.1)
+g.ax_cbar.set_position([0.85, 0.1, 0.02, 0.78])
+g.ax_cbar.set_ylabel("Normalized barcode abundance", labelpad=10)
+g.ax_heatmap.tick_params(axis='x', rotation=30)
+g.ax_heatmap.set_xlabel("Barcode")
+g.ax_heatmap.set_ylabel("Cell (n=%d)" % len(data))
+plt.show()
