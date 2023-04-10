@@ -7,82 +7,94 @@ from PIL import Image
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-rootPath = Path(r"C:\Users\jonoj\Documents\Fluorescence2\BF")
+rootPath = Path(r"BF")
 
 
-def Segment(i):
-    # Segmentation algorithm is slightly different depending on if we are dealing with a droplet bilayer.
-    segmentOverlap = [False,
-                      True,
-                      False,
-                      True,
-                      False,
-                      False,
-                      True,
-                      True]
-    toSegment = list(rootPath.iterdir())
-    SegmentMonolayer(toSegment[i])
-    # if segmentOverlap[i]:
-    #     SegmentBilayer(toSegment[i])
-    # else:
-    #     SegmentMonolayer(toSegment[i])
+def DoSegment(bfImage, radius):
+    blurred = skimage.filters.gaussian(bfImage, 1)
+    grad = skimage.filters.scharr(blurred)
+    edges = grad > skimage.filters.threshold_mean(grad)
+    edges = skimage.morphology.remove_small_objects(edges, 100)
+    distance = 10
+    radii = np.arange(8, 15)
+    hough = skimage.transform.hough_circle(edges, radii)
+    _, circleXs, circleYs, circleRadii = skimage.transform.hough_circle_peaks(hough, radii,
+                                                                              min_xdistance=distance,
+                                                                              min_ydistance=distance,
+                                                                              normalize=False)
 
-
-# def SegmentBilayer(path):
-#     image = np.asarray(Image.open(path).convert(mode="L"))
-#     thresholded = skimage.feature.canny(image, 2, low_threshold=1, high_threshold=10)
-#     thresholded2 = skimage.morphology.area_closing(thresholded, 50)
-#     thresholded = np.where(thresholded, False, thresholded2)
-#
-#     segmented = np.zeros_like(thresholded)
-#     regions = skimage.measure.regionprops(skimage.measure.label(thresholded))
-#     goodregions = []
-#     for region in regions:
-#         if region.axis_minor_length > 0 and region.axis_major_length / region.axis_minor_length < 1.5:
-#             coords_np = tuple(np.asarray(region.coords).T)
-#             segmented[coords_np] = True
-#             goodregions.append(region)
-#     Preview(image, segmented)
-
-
-def SegmentMonolayer(path):
-    image = np.asarray(Image.open(path).convert(mode="L"))
-    thresholded = skimage.feature.canny(image, 2, low_threshold=0, high_threshold=20)
-    radius = 10
-    hough = skimage.transform.hough_circle(thresholded, radius)
-    accums, cxs, cys, radii = skimage.transform.hough_circle_peaks(hough, [radius], threshold=0.5*np.max(hough), min_xdistance=int(radius*1.5),
-                                                                   min_ydistance=int(radius*1.5))
-
-    segmented = np.zeros_like(thresholded)
-    for cx, cy in zip(cxs, cys):
-        radius = 6
-        if cx-radius < 0 or cy-radius < 0 or cx+radius >= segmented.shape[0] or cy+radius >= segmented.shape[0]:
+    segmented = np.zeros_like(edges)
+    for circleX, circleY, circleRadius in zip(circleXs, circleYs, circleRadii):
+        if circleX - circleRadius < 0 or circleY - circleRadius < 0 or \
+                circleX + circleRadius >= segmented.shape[0] or circleY + circleRadius >= \
+                segmented.shape[0]:
             continue
-        segmented[skimage.draw.circle_perimeter(cy, cx, radius)] = True
+        segmented[skimage.draw.circle_perimeter(circleY, circleX, circleRadius)] = True
 
-    # regions = skimage.measure.regionprops(skimage.measure.label(thresholded))
-    # goodregions = regions
-    # for region in regions:
-    #     if region.axis_minor_length > 0 and region.axis_major_length / region.axis_minor_length < 1.5:
-    #         goodregions.append(region)
-
-    # quartiles = np.percentile([r.area for r in goodregions], [25, 75])
-    # iqr = quartiles[1]-quartiles[0]
-    # threshLower = quartiles[0] - 1.5*iqr
-    # threshUpper = quartiles[1] + 1.5 * iqr
-    # goodregions = [region for region in goodregions if threshLower <= region.area <= threshUpper]
-    # for region in goodregions:
-    #     coords_np = tuple(np.asarray(region.coords).T)
-    #     segmented[coords_np] = True
-    Preview(image, segmented)
+    return segmented
 
 
-fig, axsAll = plt.subplots(2, 3, sharex='all', sharey='all')
-axs = (x for x in axsAll.flatten())
+def DoSegmentRinse(preview=False):
+    path = rootPath / "Rinse2001.png"
+    bfImage = np.asarray(Image.open(path).convert(mode="L"))
+
+    seg = skimage.morphology.remove_small_objects(bfImage > 40, 100)
+
+    regions = skimage.measure.regionprops(skimage.measure.label(seg))
+    segmented = np.zeros_like(seg)
+    for region in regions:
+        if region.eccentricity > 0.5:
+            continue
+        segmented[skimage.draw.disk(region.centroid, 2)] = True
+
+    Image.fromarray(segmented).convert(mode="1").save(
+        rootPath / "Segmented" / (path.stem + ".png"))
+    if preview:
+        Preview(bfImage, segmented)
+
+
+def DoSegmentCrosstalk(preview=False):
+    path = rootPath / "Image20h001.png"
+    bfImage = np.asarray(Image.open(path).convert(mode="L"))
+
+    seg = skimage.morphology.remove_small_objects(bfImage > 45, 100)
+
+    regions = skimage.measure.regionprops(skimage.measure.label(seg))
+    segmented = np.zeros_like(seg)
+    for region in regions:
+        if region.eccentricity > 0.5 or region.area > 5000:
+            continue
+        segmented[skimage.draw.disk(region.centroid, 2)] = True
+
+    Image.fromarray(segmented).convert(mode="1").save(
+        rootPath / "Segmented" / (path.stem + ".png"))
+    if preview:
+        Preview(bfImage, segmented)
+
+
+def DoSegmentInlets(preview=False):
+    path = rootPath / "Inlet8.png"
+    bfImage = np.asarray(Image.open(path).convert(mode="L"))
+
+    seg = skimage.morphology.remove_small_objects(bfImage > 45, 100)
+
+    regions = skimage.measure.regionprops(skimage.measure.label(seg))
+    segmented = np.zeros_like(seg)
+    for region in regions:
+        if region.eccentricity > 0.5 or region.area > 1000:
+            continue
+        segmented[skimage.draw.disk(region.centroid, 2)] = True
+
+    Image.fromarray(segmented).convert(mode="1").save(
+        rootPath / "Segmented" / (path.stem + ".png"))
+    if preview:
+        Preview(bfImage, segmented)
 
 
 def Preview(imageNP, segmentedNP):
-    overlay = np.stack([(imageNP.astype(float) * 0.5).astype(np.uint8)] * 3, axis=-1)
+    fig, axsAll = plt.subplots(1, 3, sharex='all', sharey='all')
+    axs = (x for x in axsAll.flatten())
+    overlay = np.stack([(imageNP.astype(float) * 0.75).astype(np.uint8)] * 3, axis=-1)
     overlay[segmentedNP, 1] = 255
     plt.sca(next(axs))
     plt.imshow(imageNP, cmap="gray", interpolation="nearest")
@@ -91,15 +103,14 @@ def Preview(imageNP, segmentedNP):
     plt.sca(next(axs))
     plt.imshow(overlay)
 
+    for ax in axsAll.flatten():
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.axis('off')
+        ax.set_aspect('equal')
+    fig.subplots_adjust(wspace=0, hspace=0)
+    plt.tight_layout()
 
-Segment(0)
-Segment(2)
 
-for ax in axsAll.flatten():
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.axis('off')
-    ax.set_aspect('equal')
-fig.subplots_adjust(wspace=0, hspace=0)
-plt.tight_layout()
+DoSegmentInlets(preview=True)
 plt.show()
