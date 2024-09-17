@@ -9,7 +9,7 @@ from pathlib import Path
 data = []
 nd2Directory = Path(r"W:\Jono\Fluorescence2")
 nd2Paths = [path for path in nd2Directory.iterdir() if path.suffix == ".nd2"]
-segmentedPaths = Path(r"BF\Segmented").iterdir()
+segmentedPaths = Path(r"BF/Segmented").iterdir()
 dropletID = 0
 for nd2Path, segmentationPath in zip(nd2Paths, segmentedPaths):
     print("Analyzing %s and %s" % (nd2Path.name, segmentationPath.name))
