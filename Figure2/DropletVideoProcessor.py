@@ -1,3 +1,5 @@
+import typing
+
 import cv2
 from PIL import Image, ImageEnhance
 import numpy as np
@@ -8,7 +10,7 @@ from Util import PrintUpdate
 
 class DropletVideoProcessor:
     def __init__(self):
-        self.images = []
+        self.images: typing.List[Image.Image] = []
         self.droplets = []
         self.segmented = []
         self.fps = -1
@@ -19,7 +21,7 @@ class DropletVideoProcessor:
         i = 0
         self.images = []
         self.fps = fps
-        endFrame = None if endTime is None else int(endTime*fps)
+        endFrame = None if endTime is None else int(endTime * fps)
         startFrame = None if startTime is None else int(startTime * fps)
         while video.isOpened():
             ret, frame = video.read()
@@ -38,18 +40,32 @@ class DropletVideoProcessor:
         PrintUpdate.Done()
         video.release()
 
-    def Preprocess(self, rotation, crop, brightness):
+    # crop is xmin, xmax, ymin, ymax
+    def PreprocessAll(self, rotation, crop, brightness):
         print("Preprocessing...")
         for i, image in enumerate(self.images):
             PrintUpdate(str(i))
-            image = image.rotate(rotation, Image.Resampling.BILINEAR).crop(crop)
-            brightener = ImageEnhance.Brightness(image)
-            image = brightener.enhance(brightness)
-            self.images[i] = image
+            self.images[i] = DropletVideoProcessor.PreprocessImage(rotation, crop, brightness)
         PrintUpdate.Done()
         print("Done")
 
-    def Process(self):
+    @staticmethod
+    def PreprocessImage(rotation, crop, brightness, image):
+        crop = [crop[0] * image.width, crop[3] * image.height, crop[1] * image.width, crop[2] * image.height]
+        if crop[0] > crop[2]:
+            t = crop[0]
+            crop[0] = crop[2]
+            crop[2] = t
+        if crop[1] > crop[3]:
+            t = crop[1]
+            crop[1] = crop[3]
+            crop[3] = t
+        image = image.rotate(rotation, Image.Resampling.BILINEAR).crop(tuple(crop))
+        brightener = ImageEnhance.Brightness(image)
+        image = brightener.enhance(brightness)
+        return image
+
+    def ProcessAll(self):
         print("Converting...")
         grayscale = np.stack([skimage.color.rgb2gray(i) for i in self.images])
         foregrounds = self._RemoveBackground(grayscale)

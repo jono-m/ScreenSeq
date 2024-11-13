@@ -42,13 +42,14 @@ class Plot:
         self._DropletPopulationPlot(self.axes['f'])
 
         self._Label()
-        self._Image(r"data/chipPhoto.png", self.axes["a"])
-        self._Image(r"data/junctionImage.png", self.axes["b"])
+        self._Image(r"../data/Photos/chipPhoto.png", self.axes["a"])
+        self._Image(r"../data/ColorMicroscopy/junctionImage.png", self.axes["b"])
 
         self._Image(Image.fromarray(self.a.noSwitchFluorescence), self.axes["d"])
         self._Image(Image.fromarray(self.a.switchFluorescence), self.axes["e"])
         self.axes["d"].set_xlabel("Without switching")
         self.axes["e"].set_xlabel("With switching")
+        plt.show()
 
     def _Label(self):
         for label, ax in self.axes.items():
