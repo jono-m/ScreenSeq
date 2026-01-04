@@ -1,0 +1,1 @@
+videoPath = r"data/SCREENSEQ COLOR/"

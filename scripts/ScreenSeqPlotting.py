@@ -1,5 +1,5 @@
 import numpy as np
-from src.ScreenSeq import ScreenSeqConfiguration
+from scripts.ScreenSeq import ScreenSeqConfiguration
 import math
 import matplotlib.pyplot as plt
 import seaborn

@@ -84,8 +84,8 @@ class Plot:
         ax.legend(ax.lines, [t.get_text() for t in ax.get_legend().texts], fontsize=4, frameon=False)
 
     def _DropletPlot(self, ax: plt.Axes):
-        insetTimes = [0, 5, 10, 15, 20, 25]
-        insetFrames = [min(int(x * self.a.dvp.fps), len(self.a.sizes) - 1) for x in insetTimes]
+        insetTimes = [0, 5, 10, 15, 20]
+        insetFrames = [min(int(x * self.a.fps), len(self.a.sizes) - 1) for x in insetTimes]
 
         # Compute limits
         heightRatios = [2, 1, 1]
@@ -131,7 +131,7 @@ class Plot:
         ax.axhline(bottom + sizeHeight, linewidth=lw, color="black")
         ax.axhline(bottom + sizeHeight + colorHeight, linewidth=lw, color="black")
 
-        images = self.a.dvp.images
+        images = self.a.images
 
         imagePadding = 10
 

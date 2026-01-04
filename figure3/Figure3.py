@@ -1,8 +1,6 @@
 import sys
 
-import src.ScreenSeq as ss
-import src.ScreenSeqPlotting as spl
-import scanpy as sc
+import scripts.ScreenSeq as ss
 
 path = r"../data/Sequencing/screenSeq_3_2023.h5"
 data = ss.Load10X(path)

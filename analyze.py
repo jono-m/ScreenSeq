@@ -1,6 +1,6 @@
 import sys
 
-from src import ScreenSeq, ScreenSeqPlotting
+from scripts import ScreenSeq, ScreenSeqPlotting
 
 path = r"_old/2_10_2024_Screen/ssdata_2_10_2024.h5"
 scData = ScreenSeq.Load10X(path)

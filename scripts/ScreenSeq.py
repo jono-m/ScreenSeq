@@ -99,7 +99,7 @@ def Normalize(scData):
 
 
 def CellCycleScore(scData):
-    cell_cycle_genes = [x.strip() for x in open('regev_lab_cell_cycle_genes.txt')]
+    cell_cycle_genes = [x.strip() for x in open('../assets/regev_lab_cell_cycle_genes.txt')]
     s_genes = cell_cycle_genes[:43]
     g2m_genes = cell_cycle_genes[43:]
     sc.tl.score_genes_cell_cycle(scData, s_genes=s_genes, g2m_genes=g2m_genes)
